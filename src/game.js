@@ -1,10 +1,8 @@
-// File: game.js
-
 class Game {
   constructor(state) {
     this.state = state;
 
-    // data holders
+    // holders
     this.spawnedObjects = [];
     this.collidableObjects = [];
     this.enemies = [];
@@ -76,7 +74,7 @@ class Game {
     this.continueBtn = null;
     this.resetBtn = null;
 
-    // board alignment
+    // board align
     this.BOARD_EPSILON_Y = 0.02;
     this.boardTopY = 0.0;
   }
@@ -117,10 +115,10 @@ class Game {
     );
   }
 
-  // gets forward vector
+  // gets forward
   getForwardWorld() { const f = vec3.clone(this.facingDir); vec3.normalize(f, f); return f; }
 
-  // gets fireball spawn point
+  // gets fireball muzzle
   getMuzzleWorldPosition() {
     const center = this.getWorldCenter(this.player);
     const forward = this.getForwardWorld();
@@ -135,10 +133,10 @@ class Game {
     return muzzle;
   }
 
-  // converts world to tile
+  // world to tile
   worldToTileXZ(v) { return { ix: Math.round(v[0] / this.TILE_SIZE), iz: Math.round(v[2] / this.TILE_SIZE) }; }
 
-  // converts tile to world
+  // tile to world
   tileToWorldXZ(ix, iz, y) { return vec3.fromValues(ix * this.TILE_SIZE, y, iz * this.TILE_SIZE); }
 
   // chebyshev distance
@@ -147,13 +145,13 @@ class Game {
   // grid bounds
   gridBounds() { const h = Math.floor(this.GRID_SIZE / 2); return { min: -h, max: h }; }
 
-  // in-bounds check
+  // in-bounds
   inBounds(ix, iz) { const b=this.gridBounds(); return ix>=b.min && ix<=b.max && iz>=b.min && iz<=b.max; }
 
-  // tile of object
+  // object tile
   getTileOfObject(obj) { const c = this.getWorldCenter(obj); return this.worldToTileXZ(c); }
 
-  // tile occupation check
+  // occupancy
   isOccupied(ix, iz, except = null) {
     const p = this.getTileOfObject(this.player);
     if (!except || except !== this.player) {
@@ -167,14 +165,14 @@ class Game {
     return false;
   }
 
-  // enemy tile move
+  // enemy move to tile
   moveEnemyToTile(enemy, ix, iz) {
     const curY = this.getWorldCenter(enemy)[1];
     const target = this.tileToWorldXZ(ix, iz, curY);
     this.setWorldCenter(enemy, target);
   }
 
-  // adds aabb collider
+  // add collider
   addAABBCollider(object, halfExtents) {
     object.collider = {
       type: "AABB",
@@ -185,7 +183,7 @@ class Game {
     this.collidableObjects.push(object);
   }
 
-  // updates aabb to world
+  // sync collider
   updateWorldAABB(object) {
     const c = object.collider; if (!c || c.type !== "AABB") return;
     const center = this.getWorldCenter(object);
@@ -194,7 +192,7 @@ class Game {
     c.worldMin[2] = center[2] - c.half[2]; c.worldMax[2] = center[2] + c.half[2];
   }
 
-  // aabb intersection
+  // aabb overlap
   aabbIntersect(a, b) {
     return (
       a.worldMin[0] <= b.worldMax[0] && a.worldMax[0] >= b.worldMin[0] &&
@@ -203,7 +201,7 @@ class Game {
     );
   }
 
-  // removes object from scene
+  // remove from scene
   removeFromScene(object) {
     const i1 = this.state.objects.indexOf(object); if (i1 >= 0) this.state.objects.splice(i1, 1);
     const i2 = this.collidableObjects.indexOf(object); if (i2 >= 0) this.collidableObjects.splice(i2, 1);
@@ -217,7 +215,7 @@ class Game {
     }
   }
 
-  // creates visible collider
+  // create visible collider
   async createDebugBoxFor(object, kind) {
     if (!this.DEBUG_COLLIDERS || !object?.collider) return null;
     if (this._debugBoxes.has(object)) return this._debugBoxes.get(object);
@@ -231,14 +229,11 @@ class Game {
       name: `DEBUG_AABB_${object.name}`,
       type: "cube",
       material: {
-        diffuse: color,
-        ambient: vec3.fromValues(0.05, 0.05, 0.05),
-        specular: vec3.fromValues(0.0, 0.0, 0.0),
-        n: 1.0,
-        alpha: 0.25,
+        diffuse: color, ambient: vec3.fromValues(0.05, 0.05, 0.05),
+        specular: vec3.fromValues(0, 0, 0), n: 1.0, alpha: 0.25
       },
       position: vec3.fromValues(center[0], center[1], center[2]),
-      scale: vec3.fromValues(c.half[0] * 2.0, c.half[1] * 2.0, c.half[2] * 2.0)
+      scale: vec3.fromValues(c.half[0]*2.0, c.half[1]*2.0, c.half[2]*2.0)
     }, this.state);
     this.ensureTransformAPI(box);
     box.debug = true;
@@ -246,14 +241,14 @@ class Game {
     return box;
   }
 
-  // syncs visible collider
+  // update visible collider
   updateDebugBox(object) {
     if (!this.DEBUG_COLLIDERS || !object?.collider) return;
     const box = this._debugBoxes.get(object);
     if (!box) return;
     const c = object.collider;
     const center = this.getWorldCenter(object);
-    const targetScale = vec3.fromValues(c.half[0] * 2.0, c.half[1] * 2.0, c.half[2] * 2.0);
+    const targetScale = vec3.fromValues(c.half[0]*2.0, c.half[1]*2.0, c.half[2]*2.0);
     const curScale = box.model.scale;
     if (curScale[0] !== targetScale[0] || curScale[1] !== targetScale[1] || curScale[2] !== targetScale[2]) {
       box.model.scale[0] = targetScale[0];
@@ -261,13 +256,11 @@ class Game {
       box.model.scale[2] = targetScale[2];
     }
     const curPos = box.model.position;
-    const dx = center[0] - curPos[0], dy = center[1] - curPos[1], dz = center[2] - curPos[2];
-    if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 1e-6) {
-      box.translate(vec3.fromValues(dx, dy, dz));
-    }
+    const dx = center[0]-curPos[0], dy=center[1]-curPos[1], dz=center[2]-curPos[2];
+    if (Math.abs(dx)+Math.abs(dy)+Math.abs(dz) > 1e-6) box.translate(vec3.fromValues(dx,dy,dz));
   }
 
-  // builds cooldown bar ui
+  // build cooldown ui
   createCooldownBarUI() {
     const host = document.createElement("div");
     Object.assign(host.style, {
@@ -306,7 +299,7 @@ class Game {
     this.cooldownFill = fill;
   }
 
-  // updates cooldown bar
+  // update cooldown ui
   updateCooldownBar() {
     if (!this.cooldownFill) return;
     const t = Math.min(1, Math.max(0, (this.timeSinceStart - this.lastShotAt) / this.SHOT_COOLDOWN));
@@ -315,13 +308,13 @@ class Game {
     this.cooldownFill.style.background = `linear-gradient(90deg, rgb(${g},${g},${g}), rgb(${r},${g},${b}))`;
   }
 
-  // loads highscore
+  // load highscore
   loadHighScore() { try { const v = localStorage.getItem("cc_highscore"); const n = v ? parseInt(v, 10) : 0; return Number.isFinite(n) ? n : 0; } catch { return 0; } }
 
-  // saves highscore
+  // save highscore
   saveHighScore() { try { localStorage.setItem("cc_highscore", String(this.highScore)); } catch {} }
 
-  // builds score ui
+  // build score ui
   createScoreUI() {
     const box = document.createElement("div");
     Object.assign(box.style, {
@@ -388,7 +381,7 @@ class Game {
     this.updateSpeedUI(true);
   }
 
-  // updates score ui
+  // update score ui
   updateScoreUI() {
     if (!this.scoreText || !this.highText) return;
     const fmt = (n) => n.toString().padStart(3, "0");
@@ -396,7 +389,7 @@ class Game {
     this.highText.textContent  = `High:  ${fmt(this.highScore)}`;
   }
 
-  // updates speed ui
+  // update speed ui
   updateSpeedUI(force = false) {
     if (!this.speedRowText) return;
     const m = this.getEnemyMoveInterval();
@@ -422,7 +415,7 @@ class Game {
     }
   }
 
-  // adds score
+  // add score
   addScore(points) {
     if (!points) return;
     this.score += points;
@@ -434,7 +427,7 @@ class Game {
     this.updateSpeedUI();
   }
 
-  // builds game over ui
+  // build game over ui
   createGameOverUI() {
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
@@ -488,7 +481,7 @@ class Game {
     this.retryBtn = retry;
   }
 
-  // shows game over ui
+  // show game over ui
   showGameOverUI() {
     if (!this.gameOverOverlay) this.createGameOverUI();
     const fmt = (n) => n.toString().padStart(3, "0");
@@ -501,7 +494,7 @@ class Game {
     this.gameOverOverlay.style.display = "flex";
   }
 
-  // builds pause ui
+  // build pause ui
   createPauseUI() {
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
@@ -557,7 +550,7 @@ class Game {
     this.resetBtn = reset;
   }
 
-  // toggles pause
+  // toggle pause
   togglePause(forceValue = null) {
     if (!this.pauseOverlay) this.createPauseUI();
     const next = forceValue === null ? !this.isPaused : !!forceValue;
@@ -566,7 +559,7 @@ class Game {
     this.pauseOverlay.style.display = this.isPaused ? "flex" : "none";
   }
 
-  // ensures basic transform api
+  // ensure transforms
   ensureTransformAPI(obj) {
     if (!obj.model) obj.model = { position: vec3.fromValues(0,0,0), rotation: mat4.create(), scale: vec3.fromValues(1,1,1) };
     if (typeof obj.translate !== "function") {
@@ -583,7 +576,7 @@ class Game {
     }
   }
 
-  // clones from prefab
+  // clone prefab
   instantiateFromPrefab(prefab, name, worldCenter, scaleVec3) {
     const copyVec3 = (v) => vec3.fromValues(v[0], v[1], v[2]);
     const obj = {
@@ -617,41 +610,67 @@ class Game {
     return obj;
   }
 
-  // spawns fireball
+  // colour math helpers
+  lerp(a, b, t) { return a + (b - a) * t; }
+  mix3(a, b, t) {
+    return vec3.fromValues(
+      this.lerp(a[0], b[0], t),
+      this.lerp(a[1], b[1], t),
+      this.lerp(a[2], b[2], t)
+    );
+  }
+
+  // computes yellow→orange→red gradient
+  getFireGradient(t01) {
+    const clamp = (x) => Math.max(0, Math.min(1, x));
+    const t = clamp(t01);
+    const yellow = vec3.fromValues(1.0, 0.92, 0.18);
+    const orange = vec3.fromValues(1.0, 0.55, 0.12);
+    const red    = vec3.fromValues(0.92, 0.12, 0.12);
+    if (t < 0.5) return this.mix3(yellow, orange, t / 0.5);
+    return this.mix3(orange, red, (t - 0.5) / 0.5);
+  }
+
+  // applies gradient + flicker
+  updateProjectileFireColor(p) {
+    const t = Math.max(0, Math.min(1, p.traveled / p.maxRange));
+    const base = this.getFireGradient(t);
+    const flicker = 0.85 + 0.15 * Math.sin((this.timeSinceStart + p.traveled) * 12.0);
+    const diffuse = vec3.fromValues(base[0] * flicker, base[1] * flicker, base[2] * flicker);
+    p.object.material.diffuse = diffuse;
+    p.object.material.ambient = vec3.fromValues(diffuse[0] * 0.6, diffuse[1] * 0.6, diffuse[2] * 0.6);
+    p.object.material.specular = vec3.fromValues(0.9, 0.5, 0.2);
+    p.object.material.n = 24.0;
+    p.object.material.alpha = 1.0;
+  }
+
+  // spawn fireball
   async spawnFireball(originWorldCenter, dir) {
     let obj;
     if (this.fireballPrefab) {
       const name = `fireball-${Date.now()}`;
-      obj = this.instantiateFromPrefab(this.fireballPrefab, name, originWorldCenter, vec3.fromValues(0.4, 0.4, 0.4));
-      obj.material.diffuse = vec3.fromValues(1.0, 0.4, 0.1);
-      obj.material.ambient = vec3.fromValues(0.2, 0.1, 0.05);
-      obj.material.specular = vec3.fromValues(0.8, 0.4, 0.1);
-      obj.material.n = 16.0;
-      obj.material.alpha = 1.0;
+      obj = this.instantiateFromPrefab(this.fireballPrefab, name, originWorldCenter, vec3.fromValues(0.42, 0.42, 0.42));
     } else {
       obj = await spawnObject({
         name: `fireball-cube-${Date.now()}`,
         type: "cube",
-        material: {
-          diffuse: vec3.fromValues(1.0, 0.4, 0.1),
-          ambient: vec3.fromValues(0.2, 0.1, 0.05),
-          n: 16.0, alpha: 1.0,
-        },
+        material: { diffuse: vec3.fromValues(1,0.6,0.15), ambient: vec3.fromValues(0.4,0.25,0.08), n: 16, alpha: 1 },
         position: vec3.fromValues(0,0,0),
-        scale: vec3.fromValues(0.3, 0.3, 0.3),
+        scale: vec3.fromValues(0.34, 0.34, 0.34),
       }, this.state);
       this.ensureTransformAPI(obj);
       this.setWorldCenter(obj, originWorldCenter);
     }
     this.addAABBCollider(obj, [this.FIREBALL_RADIUS, this.FIREBALL_RADIUS, this.FIREBALL_RADIUS]);
     const projectile = { object: obj, dir: vec3.normalize(vec3.create(), dir), traveled: 0, maxRange: this.FIREBALL_RANGE };
+    this.updateProjectileFireColor(projectile);
     this.projectiles.push(projectile);
     this.spawnedObjects.push(obj);
     if (this.DEBUG_COLLIDERS) await this.createDebugBoxFor(obj, "proj");
     return projectile;
   }
 
-  // explodes and applies 3x3 hit
+  // explode 3x3
   explodeAt(pos) {
     const killed = [];
     for (const enemy of [...this.enemies]) {
@@ -664,10 +683,10 @@ class Game {
     if (killed.length > 0) this.addScore(killed.length * 100);
   }
 
-  // sign clamp
+  // clamp sign
   signClamp(v) { return v === 0 ? 0 : (v > 0 ? 1 : -1); }
 
-  // danger tile check
+  // danger tiles
   isDangerTile(ix, iz) {
     for (const p of this.projectiles) {
       const pc = this.getWorldCenter(p.object);
@@ -683,7 +702,7 @@ class Game {
     return false;
   }
 
-  // chooses enemy step
+  // choose enemy step
   chooseEnemyStep(enemy) {
     const eT = this.getTileOfObject(enemy);
     const pT = this.getTileOfObject(this.player);
@@ -714,24 +733,24 @@ class Game {
     return neighbors.length ? neighbors[0].t : eT;
   }
 
-  // speedup steps
+  // speed steps
   getSpeedupSteps() { return Math.floor(this.score / 1000); }
 
-  // current move interval
+  // move interval
   getEnemyMoveInterval() {
     if (this.maxDifficultyLocked) return this.ENEMY_MOVE_MIN;
     const steps = this.getSpeedupSteps();
     return Math.max(this.ENEMY_MOVE_MIN, this.ENEMY_MOVE_BASE - steps * this.SPEEDUP_STEP);
   }
 
-  // current spawn interval
+  // spawn interval
   getEnemySpawnInterval() {
     if (this.maxDifficultyLocked) return this.ENEMY_SPAWN_MIN;
     const steps = this.getSpeedupSteps();
     return Math.max(this.ENEMY_SPAWN_MIN, this.ENEMY_SPAWN_BASE - steps * this.SPEEDUP_STEP);
   }
 
-  // moves enemies tick
+  // tick enemy moves
   moveEnemiesTick() {
     for (const enemy of this.enemies) {
       const next = this.chooseEnemyStep(enemy);
@@ -741,7 +760,7 @@ class Game {
     }
   }
 
-  // picks spawn tile
+  // pick spawn tile
   findSpawnTile() {
     const b = this.gridBounds();
     const p = this.getTileOfObject(this.player);
@@ -758,7 +777,7 @@ class Game {
     return candidates[r];
   }
 
-  // spawns enemy at tile
+  // spawn enemy at tile
   async spawnEnemyAtTile(ix, iz) {
     let obj;
     const y = this.getWorldCenter(this.player)[1];
@@ -799,7 +818,7 @@ class Game {
     if (this.DEBUG_COLLIDERS) await this.createDebugBoxFor(obj, "enemy");
   }
 
-  // binds controls
+  // bind input
   bindControls() {
     document.addEventListener("keypress", async (e) => {
       if (this.isGameOver || this.isPaused || !this.player) return;
@@ -831,13 +850,13 @@ class Game {
     }, false);
   }
 
-  // moves object to world
+  // move to center
   moveTo(object, worldTargetCenter) { this.setWorldCenter(object, worldTargetCenter); }
 
-  // places player at grid center
+  // place player
   placePlayerAtGridCenter() { const y = this.getWorldCenter(this.player)[1]; this.moveTo(this.player, vec3.fromValues(0, y, 0)); }
 
-  // relocates enemies safely
+  // relocate enemies
   relocateEnemiesAwayFromPlayer() {
     const bounds = this.gridBounds();
     const pPos = this.getWorldCenter(this.player);
@@ -869,7 +888,7 @@ class Game {
     }
   }
 
-  // toggles collider visuals
+  // toggle colliders
   async setDebugCollidersEnabled(flag) {
     if (flag === this.DEBUG_COLLIDERS) return;
     this.DEBUG_COLLIDERS = flag;
@@ -888,10 +907,10 @@ class Game {
     if (this._debugUIButton) this._debugUIButton.textContent = "Hide Colliders (T)";
   }
 
-  // toggles collider visuals
+  // toggle colliders
   async toggleDebugColliders() { await this.setDebugCollidersEnabled(!this.DEBUG_COLLIDERS); }
 
-  // builds debug + ui
+  // build ui bundle
   createDebugToggleUI() {
     const btn = document.createElement("button");
     btn.textContent = this.DEBUG_COLLIDERS ? "Hide Colliders (T)" : "Show Colliders (T)";
@@ -912,7 +931,7 @@ class Game {
     this.createPauseUI();
   }
 
-  // detects board top
+  // detect board top
   detectBoardTopY() {
     const board = getObject(this.state, "board2");
     if (board && board.model) {
@@ -928,12 +947,10 @@ class Game {
     return 0.0;
   }
 
-  // aligns object to board
+  // align object to board
   alignObjectToBoardTop(object) {
     if (!object) return;
-    const halfY =
-      object?.collider?.half?.[1] ??
-      (object?.model?.scale ? object.model.scale[1] * 0.5 : 0.5);
+    const halfY = object?.collider?.half?.[1] ?? (object?.model?.scale ? object.model.scale[1] * 0.5 : 0.5);
     const cur = this.getWorldCenter(object);
     const targetY = this.boardTopY + halfY + this.BOARD_EPSILON_Y;
     if (Math.abs(cur[1] - targetY) < 1e-6) return;
@@ -941,7 +958,7 @@ class Game {
     this.setWorldCenter(object, next);
   }
 
-  // sets max difficulty
+  // set max difficulty
   setMaxDifficultyLocked(flag) {
     this.maxDifficultyLocked = !!flag;
     this.enemyMoveTimer = 0.0;
@@ -949,7 +966,7 @@ class Game {
     this.updateSpeedUI(true);
   }
 
-  // toggles max difficulty
+  // toggle max difficulty
   toggleMaxDifficulty() { this.setMaxDifficultyLocked(!this.maxDifficultyLocked); }
 
   // custom hook
@@ -1066,6 +1083,7 @@ class Game {
       p.object.translate(vec3.scale(vec3.create(), p.dir, step));
       p.traveled += step;
       this.updateWorldAABB(p.object);
+      this.updateProjectileFireColor(p);
 
       let hit = false;
       for (const e of this.enemies) {
