@@ -1,3 +1,5 @@
+// game.js
+
 class Game {
   constructor(state) {
     this.state = state;
@@ -6,6 +8,7 @@ class Game {
     this.collidableObjects = [];
     this.enemies = [];
     this.projectiles = [];
+    this.coins = [];
 
     this.TILE_SIZE = 1.0;
     this.GRID_SIZE = 11;
@@ -15,6 +18,9 @@ class Game {
     this.FIREBALL_RADIUS = 0.35 * this.TILE_SIZE;
     this.SPAWN_SAFETY_TIME = 0.2;
     this.SHOT_COOLDOWN = 1.5;
+
+    this.COIN_LIFETIME = 3.0;
+    this.COIN_VALUE = 25;
 
     this.enemyMoveTimer = 0.0;
     this.enemySpawnTimer = 0.0;
@@ -68,6 +74,9 @@ class Game {
 
     this.BOARD_EPSILON_Y = 0.02;
     this.boardTopY = 0.0;
+
+    this._audioCtx = null;
+    this._toastHost = null;
   }
 
   // "gets world position"
@@ -107,7 +116,7 @@ class Game {
   }
 
   // "gets forward"
-  getForwardWorld() { const f = vec3.clone(this.facingDir); vec3.normalize(f, f); return f; }
+  getForwardWorld() { if (this.state.firstPerson){return this.state.camera.front} else {const f = vec3.clone(this.facingDir); vec3.normalize(f, f); return f; };}
 
   // "gets fireball muzzle"
   getMuzzleWorldPosition() {
@@ -198,6 +207,7 @@ class Game {
     const i2 = this.collidableObjects.indexOf(object); if (i2 >= 0) this.collidableObjects.splice(i2, 1);
     const i3 = this.enemies.indexOf(object); if (i3 >= 0) this.enemies.splice(i3, 1);
     const i4 = this.projectiles.findIndex(p => p.object === object); if (i4 >= 0) this.projectiles.splice(i4, 1);
+    const i5 = this.coins.findIndex(c => c.object === object); if (i5 >= 0) this.coins.splice(i5, 1);
     const dbg = this._debugBoxes.get(object);
     if (dbg) {
       const di = this.state.objects.indexOf(dbg);
@@ -288,6 +298,15 @@ class Game {
     document.body.appendChild(host);
     this.cooldownBar = host;
     this.cooldownFill = fill;
+  }
+
+  // "cooldown pulse"
+  pulseCooldownBar() {
+    if (!this.cooldownBar) return;
+    const bar = this.cooldownBar;
+    bar.style.background = "rgba(16,185,129,0.25)";
+    bar.style.border = "1px solid rgba(16,185,129,0.5)";
+    setTimeout(() => { bar.style.background = "rgba(255,255,255,0.08)"; bar.style.border = "1px solid rgba(255,255,255,0.25)"; }, 200);
   }
 
   // "update cooldown ui"
@@ -418,7 +437,7 @@ class Game {
     this.updateSpeedUI();
   }
 
-  // "build game over ui"
+  // "game over ui"
   createGameOverUI() {
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
@@ -485,7 +504,7 @@ class Game {
     this.gameOverOverlay.style.display = "flex";
   }
 
-  // "build pause ui"
+  // "pause ui"
   createPauseUI() {
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
@@ -601,17 +620,11 @@ class Game {
     return obj;
   }
 
-  // "colour math helpers"
+  // "colour helpers"
   lerp(a, b, t) { return a + (b - a) * t; }
-  mix3(a, b, t) {
-    return vec3.fromValues(
-      this.lerp(a[0], b[0], t),
-      this.lerp(a[1], b[1], t),
-      this.lerp(a[2], b[2], t)
-    );
-  }
+  mix3(a, b, t) { return vec3.fromValues(this.lerp(a[0], b[0], t), this.lerp(a[1], b[1], t), this.lerp(a[2], b[2], t)); }
 
-  // "computes yellow→orange→red gradient"
+  // "fire gradient"
   getFireGradient(t01) {
     const clamp = (x) => Math.max(0, Math.min(1, x));
     const t = clamp(t01);
@@ -622,7 +635,7 @@ class Game {
     return this.mix3(orange, red, (t - 0.5) / 0.5);
   }
 
-  // "applies gradient + flicker"
+  // "update projectile color"
   updateProjectileFireColor(p) {
     const t = Math.max(0, Math.min(1, p.traveled / p.maxRange));
     const base = this.getFireGradient(t);
@@ -633,6 +646,107 @@ class Game {
     p.object.material.specular = vec3.fromValues(0.9, 0.5, 0.2);
     p.object.material.n = 24.0;
     p.object.material.alpha = 1.0;
+    if (p.sound && p.sound.gain) {
+      const vol = 0.04 + 0.06 * (1.0 - t);
+      p.sound.gain.gain.setTargetAtTime(vol, this._audioCtx.currentTime, 0.05);
+    }
+  }
+
+  // "play fireball loop"
+  playFireballLoop(projectile) {
+    try {
+      if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this._audioCtx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const shaper = ctx.createWaveShaper();
+      const freqs = [420, 500, 580];
+      osc.type = "sawtooth";
+      osc.frequency.value = freqs[Math.floor(Math.random()*freqs.length)];
+      gain.gain.value = 0.08;
+      const curve = new Float32Array(256);
+      for (let i=0;i<256;i++){ const x = i/255*2-1; curve[i] = Math.tanh(2.5*x); }
+      shaper.curve = curve; shaper.oversample = "4x";
+      osc.connect(shaper); shaper.connect(gain); gain.connect(ctx.destination);
+      osc.start();
+      projectile.sound = { osc, gain };
+    } catch(_) {}
+  }
+
+  // "stop fireball loop"
+  stopFireballLoop(projectile) {
+    try {
+      if (projectile.sound && projectile.sound.osc) {
+        const ctx = this._audioCtx;
+        const now = ctx.currentTime;
+        projectile.sound.gain.gain.setTargetAtTime(0.0001, now, 0.03);
+        projectile.sound.osc.stop(now + 0.08);
+      }
+    } catch(_) {}
+    projectile.sound = null;
+  }
+
+  // "explosion sfx"
+  playExplosionSfx() {
+    try {
+      if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this._audioCtx;
+      const now = ctx.currentTime + 0.01;
+
+      const bufferSize = 0.2 * ctx.sampleRate;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i=0;i<bufferSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufferSize); }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const low = ctx.createBiquadFilter();
+      low.type = "lowpass"; low.frequency.setValueAtTime(800, now);
+      const gainN = ctx.createGain(); gainN.gain.setValueAtTime(0.25, now);
+      noise.connect(low); low.connect(gainN); gainN.connect(ctx.destination);
+      noise.start(now); noise.stop(now + 0.18);
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.25);
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(now); osc.stop(now + 0.26);
+    } catch(_) {}
+  }
+
+  // "spawn sfx"
+  playSpawnSfx() {
+    try {
+      if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this._audioCtx;
+      const now = ctx.currentTime + 0.005;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(180, now + 0.11);
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(now); osc.stop(now + 0.14);
+
+      const nsrc = ctx.createBufferSource();
+      const len = 0.03 * ctx.sampleRate;
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const ch = buf.getChannelData(0);
+      for (let i=0;i<len;i++){ ch[i] = (Math.random()*2-1) * (1 - i/len); }
+      nsrc.buffer = buf;
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 900;
+      const g2 = ctx.createGain(); g2.gain.value = 0.06;
+      nsrc.connect(hp); hp.connect(g2); g2.connect(ctx.destination);
+      nsrc.start(now); nsrc.stop(now + 0.03);
+    } catch(_) {}
   }
 
   // "spawns fireball"
@@ -653,12 +767,144 @@ class Game {
       this.setWorldCenter(obj, originWorldCenter);
     }
     this.addAABBCollider(obj, [this.FIREBALL_RADIUS, this.FIREBALL_RADIUS, this.FIREBALL_RADIUS]);
-    const projectile = { object: obj, dir: vec3.normalize(vec3.create(), dir), traveled: 0, maxRange: this.FIREBALL_RANGE };
+    const projectile = { object: obj, dir: vec3.normalize(vec3.create(), dir), traveled: 0, maxRange: this.FIREBALL_RANGE, sound: null };
     this.updateProjectileFireColor(projectile);
     this.projectiles.push(projectile);
     this.spawnedObjects.push(obj);
     if (this.DEBUG_COLLIDERS) await this.createDebugBoxFor(obj, "proj");
+    this.playFireballLoop(projectile);
     return projectile;
+  }
+
+  // "spawn coin"
+  async spawnCoinAt(worldPos) {
+    const name = `coin-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    const obj = await spawnObject({
+      name,
+      type: "cube",
+      material: {
+        diffuse: vec3.fromValues(1.0, 0.84, 0.0),
+        ambient: vec3.fromValues(0.4, 0.34, 0.0),
+        specular: vec3.fromValues(0.9, 0.8, 0.3),
+        n: 32.0,
+        alpha: 1.0,
+      },
+      position: vec3.fromValues(worldPos[0], worldPos[1], worldPos[2]),
+      scale: vec3.fromValues(0.35, 0.1, 0.35),
+    }, this.state);
+    this.ensureTransformAPI(obj);
+    this.setWorldCenter(obj, worldPos);
+    this.alignObjectToBoardTop(obj);
+    const center = this.getWorldCenter(obj);
+    const expireAt = this.timeSinceStart + this.COIN_LIFETIME;
+    this.coins.push({ object: obj, expireAt, baseY: center[1], animPhase: Math.random()*Math.PI*2 });
+    return obj;
+  }
+
+  // "coin sfx"
+  playCoinSfx() {
+    try {
+      if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = this._audioCtx;
+      const now = ctx.currentTime + 0.02;
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.type = "sine"; osc2.type = "sine";
+      osc1.frequency.setValueAtTime(880, now);
+      osc2.frequency.setValueAtTime(1320, now+0.05);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+      osc1.start(now); osc1.stop(now + 0.15);
+      osc2.start(now + 0.05); osc2.stop(now + 0.25);
+    } catch(_) {}
+  }
+
+  // "build toast ui"
+  ensureToastHost() {
+    if (this._toastHost) return;
+    const host = document.createElement("div");
+    Object.assign(host.style, {
+      position: "fixed",
+      top: "48px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: "10003",
+      pointerEvents: "none",
+      fontFamily: "system-ui, sans-serif",
+    });
+    document.body.appendChild(host);
+    this._toastHost = host;
+  }
+
+  // "show toast"
+  showToast(text, color = "#f7c948") {
+    this.ensureToastHost();
+    const el = document.createElement("div");
+    el.textContent = text;
+    Object.assign(el.style, {
+      background: "rgba(17,24,39,0.85)",
+      color,
+      border: "1px solid rgba(255,255,255,0.18)",
+      borderRadius: "10px",
+      padding: "6px 10px",
+      marginTop: "6px",
+      fontWeight: "800",
+      letterSpacing: "0.5px",
+      boxShadow: "0 4px 10px rgba(0,0,0,0.25)",
+      transform: "translateY(0px)",
+      opacity: "0",
+    });
+    this._toastHost.appendChild(el);
+    requestAnimationFrame(() => {
+      el.style.transition = "transform 420ms ease-out, opacity 420ms ease-out";
+      el.style.opacity = "1";
+      el.style.transform = "translateY(-8px)";
+    });
+    setTimeout(() => {
+      el.style.transition = "transform 300ms ease-in, opacity 260ms ease-in";
+      el.style.opacity = "0";
+      el.style.transform = "translateY(-22px)";
+      setTimeout(() => { el.remove(); }, 320);
+    }, 700);
+  }
+
+  // "collect coin"
+  collectCoin(entry) {
+    this.lastShotAt = this.timeSinceStart - this.SHOT_COOLDOWN;
+    this.addScore(this.COIN_VALUE);
+    if (this.cooldownFill) {
+      const old = this.cooldownFill.style.transition;
+      this.cooldownFill.style.transition = "none";
+      this.cooldownFill.style.width = "100%";
+      this.cooldownFill.offsetHeight;
+      this.cooldownFill.style.transition = old || "width 80ms linear";
+    }
+    this.pulseCooldownBar();
+    this.showToast("+25 • cooldown refilled");
+    this.playCoinSfx();
+    this.removeFromScene(entry.object);
+  }
+
+  // "tick coins"
+  updateCoins(deltaTime) {
+    const pTile = this.getTileOfObject(this.player);
+    for (let i = this.coins.length - 1; i >= 0; --i) {
+      const c = this.coins[i];
+      if (this.timeSinceStart >= c.expireAt) {
+        this.removeFromScene(c.object);
+        continue;
+      }
+      c.animPhase += deltaTime * 5.0;
+      const bob = 0.12 * Math.sin(c.animPhase);
+      c.object.model.position[1] = c.baseY + bob;
+      c.object.rotate('y', deltaTime * 4.0);
+      const cTile = this.worldToTileXZ(this.getWorldCenter(c.object));
+      if (cTile.ix === pTile.ix && cTile.iz === pTile.iz) {
+        this.collectCoin(c);
+      }
+    }
   }
 
   // "explode 3x3"
@@ -670,8 +916,13 @@ class Game {
       const { ix: cx, iz: cz } = this.worldToTileXZ(pos);
       if (this.chebyshevTileDistance(ex, ez, cx, cz) <= 1.0 + 1e-3) killed.push(enemy);
     }
-    for (const e of killed) this.removeFromScene(e);
+    for (const e of killed) {
+      const dropPos = this.getWorldCenter(e);
+      this.spawnCoinAt(dropPos);
+      this.removeFromScene(e);
+    }
     if (killed.length > 0) this.addScore(killed.length * 100);
+    this.playExplosionSfx();
   }
 
   // "clamp sign"
@@ -807,19 +1058,105 @@ class Game {
     this.alignObjectToBoardTop(obj);
 
     if (this.DEBUG_COLLIDERS) await this.createDebugBoxFor(obj, "enemy");
+
+    this.playSpawnSfx();
+  }
+
+  // "dir signature"
+  getSignatureM(lookDirection) {
+    var signature = '';
+    if (lookDirection[0] >= 0 && lookDirection[2] >= 0) {
+      if (lookDirection[0] < 0.5){ signature = 'NE'; } else { signature = 'NW'; }
+    } else if (lookDirection[0] < 0 && lookDirection[2] >= 0){
+      if (lookDirection[0] >= -0.5){ signature = 'NE'; } else { signature = 'SE'; }
+    } else if (lookDirection[0] >= 0 && lookDirection[2] < 0) {
+      if (lookDirection[2] >= -0.5){ signature = 'NW'; } else { signature = 'SW'; }
+    } else {
+      if (lookDirection[2] >= -0.5){ signature = 'SE'; } else { signature = 'SW'; }
+    }
+    return signature;
+  }
+
+  // "move by signature"
+  moveSignature(signature, speed){
+    if (signature == 'NW'){
+      this.player.translate(vec3.fromValues(speed, 0, 0));
+      this.state.camera.position[0] += speed;
+    } else if (signature == 'NE'){
+      this.player.translate(vec3.fromValues(0, 0, speed));
+      this.state.camera.position[2] += speed;
+    } else if (signature == 'SE'){
+      this.player.translate(vec3.fromValues(-speed, 0, 0));
+      this.state.camera.position[0] -= speed;
+    } else {
+      this.player.translate(vec3.fromValues(0, 0, -speed));
+      this.state.camera.position[2] -= speed;
+    }
+  }
+
+  // "rotate signature"
+  twistSignature(signature){
+    if (signature == 'NW'){ signature = 'NE';
+    } else if (signature == 'NE'){ signature = 'SE';
+    } else if (signature == 'SE'){ signature = 'SS';
+    } else { signature = 'NW'; }
+    return signature;
   }
 
   // "bind input"
   bindControls() {
     document.addEventListener("keypress", async (e) => {
       if (this.isGameOver || this.isPaused || !this.player) return;
+      var cam = this.state.camera;
       e.preventDefault();
       switch (e.key) {
-        case "a": this.player.translate(vec3.fromValues(+1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(+1, 0, 0); break;
-        case "d": this.player.translate(vec3.fromValues(-1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(-1, 0, 0); break;
-        case "w": this.player.translate(vec3.fromValues(0, 0, +1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, +1); break;
-        case "s": this.player.translate(vec3.fromValues(0, 0, -1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, -1); break;
+        case "a": 
+          if (this.state.firstPerson){
+            this.moveSignature(this.twistSignature(this.getSignatureM(vec3.fromValues(cam.front[0], 0.0, cam.front[2]))), -1 * this.TILE_SIZE);
+          } else {
+            this.player.translate(vec3.fromValues(+1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(+1, 0, 0);
+            this.fire.translate(vec3.fromValues(+1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(+1, 0, 0);
+          } break;
+        case "d": 
+          if (this.state.firstPerson){
+            this.moveSignature(this.twistSignature(this.getSignatureM(vec3.fromValues(cam.front[0], 0.0, cam.front[2]))), 1 * this.TILE_SIZE);
+          } else {
+            this.player.translate(vec3.fromValues(-1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(-1, 0, 0);
+            this.fire.translate(vec3.fromValues(-1 * this.TILE_SIZE, 0, 0)); this.facingDir = vec3.fromValues(-1, 0, 0);
+          } break;
+        case "w": 
+          if (this.state.firstPerson){
+            this.moveSignature(this.getSignatureM(vec3.fromValues(cam.front[0], 0.0, cam.front[2])), 1 * this.TILE_SIZE);
+          } else {
+            this.player.translate(vec3.fromValues(0, 0, +1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, +1);
+            this.fire.translate(vec3.fromValues(0, 0, +1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, +1);
+          } break;
+        case "s":
+          if (this.state.firstPerson){
+            this.moveSignature(this.getSignatureM(vec3.fromValues(cam.front[0], 0.0, cam.front[2])), -1 * this.TILE_SIZE);
+          } else { 
+            this.player.translate(vec3.fromValues(0, 0, -1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, -1);
+            this.fire.translate(vec3.fromValues(0, 0, -1 * this.TILE_SIZE)); this.facingDir = vec3.fromValues(0, 0, -1);
+          } break;
         case " ":
+          var cam2 = this.state.camera;
+          this.state.firstPerson = !this.state.firstPerson;
+          if (this.state.firstPerson == true){
+            this.fire.translate(vec3.fromValues(0.0, -10.0, 0.0));
+            this.state.camPos = cam2.position;
+            this.state.camFro = cam2.front;
+            cam2.position = vec3.fromValues(this.player.model.position[0],this.player.model.position[1],this.player.model.position[2]);
+            cam2.position[1] += 2.0;
+            cam2.front = vec3.fromValues(-100.0, 0.0, 0.0);
+          } else {
+            this.fire.model.position = vec3.fromValues(this.player.model.position[0], this.player.model.position[1], this.player.model.position[2]);
+            cam2.position = this.state.camPos;
+            cam2.front = this.state.camFro;
+          }
+          cam2.lastX = null;
+          cam2.lastY = null;
+          break;
+        case "1":
           if (this.timeSinceStart - this.lastShotAt >= this.SHOT_COOLDOWN) {
             this.lastShotAt = this.timeSinceStart;
             const muzzle = this.getMuzzleWorldPosition();
@@ -839,6 +1176,41 @@ class Game {
       if (e.key === "Escape") { e.preventDefault(); this.togglePause(); return; }
       if (e.key === "i" || e.key === "I") { e.preventDefault(); this.toggleMaxDifficulty(); }
     }, false);
+
+    document.addEventListener('mousemove', (e) => {
+      var cam = this.state.camera;
+      var sense = 0.5;
+      if (this.state.firstPerson){
+        if (cam.lastX == null && cam.lastY == null){
+          cam.lastX = e.clientX; cam.lastY = e.clientY;
+        }
+        cam.pitch += (cam.lastY - e.clientY)*sense;
+        cam.yaw += (e.clientX - cam.lastX)*sense;
+        cam.lastX = e.clientX; cam.lastY = e.clientY;
+        cam.pitch = Math.max(-89, Math.min(89, cam.pitch));
+        var myaw = cam.yaw * Math.PI / 180;
+        var mpit = cam.pitch * Math.PI / 180;
+        vec3.normalize(cam.front, vec3.fromValues(Math.cos(myaw)*Math.cos(mpit), Math.sin(mpit), Math.sin(myaw)*Math.cos(mpit)));
+      } else {
+        var cPoint = [0, 0, 0];
+        var cRad = 10;
+        if (cam.lastX == null && cam.lastY == null){
+          cam.lastX = e.clientX; cam.lastY = e.clientY;
+        }
+        cam.pitch += (cam.lastY - e.clientY)*sense;
+        cam.yaw += (e.clientX - cam.lastX)*sense;
+        cam.lastX = e.clientX; cam.lastY = e.clientY;
+        cam.pitch = Math.max(-89, Math.min(0, cam.pitch));
+        var myaw2 = cam.yaw * Math.PI / 180;
+        var mpit2 = cam.pitch * Math.PI / 180;
+        var rot = vec3.fromValues(Math.cos(myaw2)*Math.cos(mpit2), Math.sin(mpit2), Math.sin(myaw2)*Math.cos(mpit2));
+        vec3.normalize(rot, rot);
+        cam.position[0] = cPoint[0] - rot[0] *cRad;
+        cam.position[1] = cPoint[1] - rot[1] *cRad;
+        cam.position[2] = cPoint[2] - rot[2] *cRad;
+        vec3.subtract(cam.front, cPoint, cam.position);
+        vec3.normalize(cam.front, cam.front);
+      }});
   }
 
   // "move to center"
@@ -974,7 +1346,7 @@ class Game {
   // "init"
   async onStart() {
     const objs = this.state.objects || [];
-    this.player = getObject(this.state, "pawn") || objs.find(o => (o.name || "").toLowerCase() === "pawn");
+    this.player = getObject(this.state, "platform") || objs.find(o => (o.name || "").toLowerCase() === "platform");
     if (!this.player) throw new Error("Player (pawn) not found in scene.");
     this.enemies = objs.filter(o => (o.name || "").toLowerCase().startsWith("rook"));
 
@@ -988,8 +1360,8 @@ class Game {
     this.rookPrefab = getObject(this.state, "rook") || null;
     if (this.rookPrefab?.model) this.ensureTransformAPI(this.rookPrefab);
 
-    // remove idle objects at origin (+ platform)
-    this.removeSceneObjectsByName(["fire", "projectile", "platform"]);
+    this.removeSceneObjectsByName(["projectile", "pawn"]);
+    this.fire = getObject(this.state, "fire");
 
     const defaultHalf = (o) => {
       const s = o?.model?.scale || vec3.fromValues(1, 1, 1);
@@ -1022,6 +1394,11 @@ class Game {
     this.highScore = this.loadHighScore();
     this.updateScoreUI();
     this.updateSpeedUI(true);
+
+    this.player.model.position[1] = 0.0;
+
+    this.ensureToastHost();
+    try { if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(_) {}
   }
 
   // "per-frame update"
@@ -1094,8 +1471,13 @@ class Game {
       if (hit || p.traveled >= p.maxRange) {
         const impact = this.getWorldCenter(p.object);
         this.explodeAt(impact);
+        this.stopFireballLoop(p);
         this.removeFromScene(p.object);
       }
     }
+
+    this.updateCoins(deltaTime);
   }
 }
+
+if (typeof window !== 'undefined') window.Game = Game;
