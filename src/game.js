@@ -1,5 +1,3 @@
-// game.js
-
 class Game {
   constructor(state) {
     this.state = state;
@@ -12,7 +10,7 @@ class Game {
 
     this.TILE_SIZE = 1.0;
     this.GRID_SIZE = 11;
-    this.MIN_ENEMY_TILES = 3;
+    this.MIN_ENEMY_TILES = 4; // <-- restore to 4 tiles away from the player
     this.FIREBALL_SPEED = 6.0 * this.TILE_SIZE;
     this.FIREBALL_RANGE = 4.0 * this.TILE_SIZE;
     this.FIREBALL_RADIUS = 0.35 * this.TILE_SIZE;
@@ -79,28 +77,21 @@ class Game {
     this._toastHost = null;
   }
 
-  // "gets world position"
+  // ---------- POSITION HELPERS (fixed) ----------
+
+  // Use model.position (or legacy object.position) — do NOT rely on modelMatrix for reads.
   getWorldPos(object) {
-    const m = object?.model?.modelMatrix;
-    if (m) {
-      const out = vec4.fromValues(0, 0, 0, 1);
-      vec4.transformMat4(out, out, m);
-      return vec3.fromValues(out[0], out[1], out[2]);
-    }
-    const p = object?.model?.position || vec3.fromValues(0, 0, 0);
+    const p =
+      object?.model?.position
+        ? object.model.position
+        : (object?.position ? object.position : vec3.fromValues(0, 0, 0));
     return vec3.fromValues(p[0], p[1], p[2]);
   }
 
-  // "gets world center"
+  // World center = world position + centroid
   getWorldCenter(object) {
-    const m = object?.model?.modelMatrix;
-    const c = object?.centroid || vec3.fromValues(0, 0, 0);
-    if (m) {
-      const v4 = vec4.fromValues(c[0], c[1], c[2], 1.0);
-      vec4.transformMat4(v4, v4, m);
-      return vec3.fromValues(v4[0], v4[1], v4[2]);
-    }
     const p = this.getWorldPos(object);
+    const c = object?.centroid || vec3.fromValues(0, 0, 0);
     return vec3.fromValues(p[0] + c[0], p[1] + c[1], p[2] + c[2]);
   }
 

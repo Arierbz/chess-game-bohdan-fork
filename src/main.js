@@ -194,6 +194,17 @@ function drawScene(gl, deltaTime, state) {
   const nonHud = state.objects.filter(o => !o.isHUD);
   const hud    = state.objects.filter(o =>  o.isHUD);
 
+  const opaqueWorld = [];
+  const transparentWorld = [];
+
+  for (const o of nonHud) {
+    if (o.material && o.material.alpha < 1.0) {
+      transparentWorld.push(o);
+    } else {
+      opaqueWorld.push(o);
+    }
+  }
+
   // Helper: robust world-centroid (tolerates missing centroid/modelMatrix)
   const worldCentroid = (o) => {
     const c = o?.centroid || [0, 0, 0];
@@ -298,7 +309,6 @@ function drawScene(gl, deltaTime, state) {
 
         // VAO + textures
         gl.bindVertexArray(object.buffers.vao);
-
         if (object.model.texture != null) {
           state.samplerExists = 1;
           gl.activeTexture(gl.TEXTURE0);
@@ -335,9 +345,22 @@ function drawScene(gl, deltaTime, state) {
   };
 
   // PASS 1: world
-  renderList(nonHud);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+  renderList(opaqueWorld);
 
-  // PASS 2: HUD (always on top)
+  // PASS 2: transparent world
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  renderList(transparentWorld);
+  gl.disable(gl.BLEND);
+  gl.depthMask(true);
+
+
+  // PASS 3: HUD
   gl.disable(gl.DEPTH_TEST);
   gl.depthMask(false);
   gl.enable(gl.BLEND);
